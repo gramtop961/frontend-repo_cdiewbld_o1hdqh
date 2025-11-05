@@ -3,12 +3,14 @@ import Header from './components/Header';
 import RoutineChecklist from './components/RoutineChecklist';
 import NutritionPlan from './components/NutritionPlan';
 import WorkoutPlan from './components/WorkoutPlan';
+import DailyTracker from './components/DailyTracker';
 
 export default function App() {
   return (
     <div className="min-h-screen bg-gradient-to-b from-white via-slate-50 to-slate-100 text-gray-900">
       <Header />
       <main>
+        <DailyTracker />
         <RoutineChecklist />
         <NutritionPlan />
         <WorkoutPlan />
