@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Calendar as CalendarIcon, CheckCircle2, Apple, Dumbbell, ChevronLeft, ChevronRight } from 'lucide-react';
 
 const WARMUP_ITEMS = [
@@ -40,6 +40,9 @@ export default function DailyTracker() {
   const [summary, setSummary] = useState({ month: monthKey(new Date()), days: [] });
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [offline, setOffline] = useState(false);
+
+  const localMapRef = useRef({}); // fallback cache keyed by YYYY-MM-DD
 
   const baseUrl = import.meta.env.VITE_BACKEND_URL || '';
 
@@ -47,8 +50,7 @@ export default function DailyTracker() {
     const start = startOfMonth(viewDate);
     const end = endOfMonth(viewDate);
     const days = [];
-    // pad start to Monday=1 grid (Sun=0)
-    const startDay = start.getDay();
+    const startDay = start.getDay(); // 0..6 (Sun..Sat)
     for (let i = 0; i < startDay; i++) days.push(null);
     for (let d = 1; d <= end.getDate(); d++) {
       days.push(new Date(viewDate.getFullYear(), viewDate.getMonth(), d));
@@ -58,52 +60,110 @@ export default function DailyTracker() {
 
   const selectedKey = formatDate(selectedDate);
 
+  // Helpers to compute counts
+  const countCompleted = (obj) => Object.values(obj || {}).filter(Boolean).length;
+  const totalItems = WARMUP_ITEMS.length + FOOD_ITEMS.length;
+
+  // Build summary from local cache (used in offline mode or as optimistic UI)
+  const recomputeLocalSummary = (month) => {
+    const days = [];
+    const [y, m] = month.split('-').map(Number);
+    const last = new Date(y, m, 0).getDate();
+    for (let d = 1; d <= last; d++) {
+      const key = `${month}-${String(d).padStart(2, '0')}`;
+      const rec = localMapRef.current[key];
+      if (rec) {
+        days.push({
+          date: key,
+          warmup_count: countCompleted(rec.warmup),
+          food_count: countCompleted(rec.food),
+        });
+      }
+    }
+    setSummary({ month, days });
+  };
+
+  // Fetch single day
   useEffect(() => {
-    const controller = new AbortController();
+    let aborted = false;
     async function fetchEntry(d) {
       setLoading(true);
       try {
-        const res = await fetch(`${baseUrl}/tracker/${d}`, { signal: controller.signal });
+        if (!baseUrl) throw new Error('No backend URL');
+        const res = await fetch(`${baseUrl}/tracker/${d}`);
+        if (!res.ok) throw new Error('Network');
         const data = await res.json();
-        setEntry({ date: d, warmup: data.warmup || {}, food: data.food || {}, notes: data.notes || '' });
+        if (aborted) return;
+        const next = { date: d, warmup: data.warmup || {}, food: data.food || {}, notes: data.notes || '' };
+        setEntry(next);
+        // keep local cache in sync
+        localMapRef.current[d] = next;
+        setOffline(false);
       } catch (e) {
-        // ignore if navigating away
+        // Offline fallback: use local cache for day
+        const cached = localMapRef.current[d] || { date: d, warmup: {}, food: {}, notes: '' };
+        if (!aborted) {
+          setEntry(cached);
+          setOffline(true);
+        }
       } finally {
-        setLoading(false);
+        if (!aborted) setLoading(false);
       }
     }
     fetchEntry(selectedKey);
-    return () => controller.abort();
+    return () => {
+      aborted = true;
+    };
   }, [selectedKey, baseUrl]);
 
+  // Fetch month summary
   useEffect(() => {
-    const controller = new AbortController();
+    let aborted = false;
     async function fetchMonth() {
       try {
-        const res = await fetch(`${baseUrl}/tracker?month=${monthKey(viewDate)}`, { signal: controller.signal });
+        if (!baseUrl) throw new Error('No backend URL');
+        const res = await fetch(`${baseUrl}/tracker?month=${monthKey(viewDate)}`);
+        if (!res.ok) throw new Error('Network');
         const data = await res.json();
+        if (aborted) return;
         setSummary(data);
-      } catch {}
+        setOffline(false);
+      } catch {
+        recomputeLocalSummary(monthKey(viewDate));
+        if (!aborted) setOffline(true);
+      }
     }
     fetchMonth();
-    return () => controller.abort();
+    return () => {
+      aborted = true;
+    };
   }, [viewDate, baseUrl]);
 
   const save = async (next) => {
     setSaving(true);
+    // Optimistic update into local cache and summary
+    localMapRef.current[selectedKey] = next;
+    recomputeLocalSummary(monthKey(viewDate));
+
     try {
+      if (!baseUrl) throw new Error('No backend URL');
       const res = await fetch(`${baseUrl}/tracker/${selectedKey}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ warmup: next.warmup, food: next.food, notes: next.notes || null }),
       });
+      if (!res.ok) throw new Error('Network');
       const data = await res.json();
       setEntry(data);
-      // refresh month summary
+      // refresh month summary from server for accuracy
       const res2 = await fetch(`${baseUrl}/tracker?month=${monthKey(viewDate)}`);
-      setSummary(await res2.json());
+      if (res2.ok) {
+        setSummary(await res2.json());
+        setOffline(false);
+      }
     } catch (e) {
-      console.error(e);
+      // keep optimistic values, mark offline
+      setOffline(true);
     } finally {
       setSaving(false);
     }
@@ -116,11 +176,17 @@ export default function DailyTracker() {
   };
 
   const dayScore = (d) => {
-    const rec = summary.days.find((x) => x.date === formatDate(d));
-    if (!rec) return 0;
-    // total possible items count
-    const total = WARMUP_ITEMS.length + FOOD_ITEMS.length;
-    return Math.round(((rec.warmup_count + rec.food_count) / total) * 100);
+    const key = formatDate(d);
+    // Prefer server summary; if missing, compute from local cache
+    const rec = summary.days.find((x) => x.date === key);
+    if (rec) {
+      return Math.round(((rec.warmup_count + rec.food_count) / totalItems) * 100);
+    }
+    const cached = localMapRef.current[key];
+    if (cached) {
+      return Math.round(((countCompleted(cached.warmup) + countCompleted(cached.food)) / totalItems) * 100);
+    }
+    return 0;
   };
 
   const isToday = (d) => formatDate(d) === formatDate(new Date());
@@ -176,7 +242,7 @@ export default function DailyTracker() {
           <div className="flex items-center gap-2 mb-3">
             <Dumbbell className="w-4 h-4 text-emerald-600" />
             <h3 className="font-semibold text-gray-900">Warm-up Checklist</h3>
-            <span className="ml-auto text-xs text-gray-500">{loading ? 'Loading…' : saving ? 'Saving…' : ''}</span>
+            <span className="ml-auto text-xs text-gray-500">{loading ? 'Loading…' : saving ? 'Saving…' : offline ? 'Offline mode' : ''}</span>
           </div>
           <ul className="space-y-2">
             {WARMUP_ITEMS.map((it) => (
