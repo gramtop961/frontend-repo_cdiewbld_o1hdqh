@@ -1,28 +1,33 @@
-import { useState } from 'react'
+import React from 'react';
+import Header from './components/Header';
+import RoutineChecklist from './components/RoutineChecklist';
+import NutritionPlan from './components/NutritionPlan';
+import WorkoutPlan from './components/WorkoutPlan';
 
-function App() {
-  const [count, setCount] = useState(0)
-
+export default function App() {
   return (
-    <div className="min-h-screen bg-gradient-to-br from-purple-50 to-blue-50 flex items-center justify-center">
-      <div className="bg-white p-8 rounded-lg shadow-lg">
-        <h1 className="text-3xl font-bold text-gray-800 mb-4">
-          Vibe Coding Platform
-        </h1>
-        <p className="text-gray-600 mb-6">
-          Your AI-powered development environment
-        </p>
-        <div className="text-center">
-          <button
-            onClick={() => setCount(count + 1)}
-            className="bg-blue-500 hover:bg-blue-600 text-white font-semibold py-2 px-4 rounded"
-          >
-            Count is {count}
-          </button>
-        </div>
-      </div>
-    </div>
-  )
-}
+    <div className="min-h-screen bg-gradient-to-b from-white via-slate-50 to-slate-100 text-gray-900">
+      <Header />
+      <main>
+        <RoutineChecklist />
+        <NutritionPlan />
+        <WorkoutPlan />
 
-export default App
+        <section className="max-w-6xl mx-auto px-4 sm:px-6 pb-16">
+          <div className="bg-white border border-gray-200 rounded-2xl p-6">
+            <h3 className="text-xl font-bold mb-3">Daily Tips</h3>
+            <ul className="grid sm:grid-cols-2 gap-2 list-disc list-inside text-gray-700">
+              <li>Protein every 3–4 hours (even snacks).</li>
+              <li>Walk 10 minutes after every meal — helps belly fat burn.</li>
+              <li>Limit sugar, soft drinks, alcohol.</li>
+              <li>Keep posture upright — slouching adds belly pressure and shoulder pain.</li>
+            </ul>
+          </div>
+        </section>
+      </main>
+      <footer className="text-center text-xs text-gray-500 pb-8">
+        Built for your goals — consistent, simple, effective.
+      </footer>
+    </div>
+  );
+}
